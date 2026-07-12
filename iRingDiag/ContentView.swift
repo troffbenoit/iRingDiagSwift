@@ -107,6 +107,9 @@ struct ContentView: View {
     /// synchronized whenever the user moves the slider or submits
     /// a typed value.
     @State private var sliderValue: Double = 0.0
+    
+
+    @State private var selectedScanner: ScannerModel = .aquilion16
 
 
     //==================================================================
@@ -146,7 +149,16 @@ struct ContentView: View {
     /// The actual detector geometry calculation is performed by
     /// `Aq16Math`. This view only requests and displays the result.
     private var highChannel: Int {
-        Aq16Math.highChannel(forRadius: radius)
+
+        switch selectedScanner {
+
+        case .aquilion16:
+            return Aq16Math.highChannel(forRadius: radius)
+
+        case .aquilion32,
+             .aquilion64:
+            return Aq16Math.highChannel(forRadius: radius)
+        }
     }
 
     /// Low-side detector channel for the current radius.
@@ -169,6 +181,25 @@ struct ContentView: View {
     /// lookup.
     private var highConverter: Int {
         Aq16Converters.highConverter(for: highChannel)
+    }
+    /// High-side ADC2 board for Aquilion 32/64.
+    private var highADC2: Int {
+        Aq3264Converters.highADC2(for: highChannel)
+    }
+
+    /// Low-side ADC2 board for Aquilion 32/64.
+    private var lowADC2: Int {
+        Aq3264Converters.lowADC2(for: lowChannel)
+    }
+
+    /// High-side QV2 board for Aquilion 32/64.
+    private var highQV2: Int {
+        Aq3264Converters.highQV2(for: highChannel)
+    }
+
+    /// Low-side QV2 board for Aquilion 32/64.
+    private var lowQV2: Int {
+        Aq3264Converters.lowQV2(for: lowChannel)
     }
 
     /// Converter associated with the low-side detector channel.
@@ -231,14 +262,28 @@ struct ContentView: View {
                 //------------------------------------------------------
                 // Scanner Model Title
                 //------------------------------------------------------
+                
+                //------------------------------------------------------
+                // Scanner Selection
+                //------------------------------------------------------
 
-                Text("Aquilion 16")
-                    .font(
-                        .system(
-                            size: 34,
-                            weight: .bold
-                        )
-                    )
+                Picker("Scanner", selection: $selectedScanner) {
+
+                    ForEach(ScannerModel.allCases) { scanner in
+                        Text(scanner.rawValue)
+                            .tag(scanner)
+                    }
+                }
+                .pickerStyle(.menu)
+
+
+                //------------------------------------------------------
+                // Scanner Model Title
+                //------------------------------------------------------
+
+                Text(selectedScanner.rawValue)
+                    .font(.system(size: 34,
+                                  weight: .bold))
                     .padding(.top, 25)
 
 
@@ -357,21 +402,92 @@ struct ContentView: View {
     //==================================================================
 
     /// Displays the converters corresponding to the calculated channels.
+    /// Displays the electronics boards associated with the calculated
+    /// high-side and low-side detector channels.
+    ///
+    /// Aquilion 16 uses CONV16 converter boards.
+    ///
+    /// Aquilion 32 and Aquilion 64 use two board types:
+    ///
+    /// - ADC2
+    /// - QV2
+    ///
+    /// `@ViewBuilder` allows this computed property to return different
+    /// SwiftUI layouts depending on the selected scanner model.
+    @ViewBuilder
     private var converterSection: some View {
 
-        HStack {
+        switch selectedScanner {
 
-            resultColumn(
-                heading: "High",
-                subheading: "Converter",
-                value: highConverter
-            )
+        //--------------------------------------------------------------
+        // Aquilion 16 Electronics
+        //--------------------------------------------------------------
 
-            resultColumn(
-                heading: "Low",
-                subheading: "Converter",
-                value: lowConverter
-            )
+        case .aquilion16:
+
+            HStack {
+
+                resultColumn(
+                    heading: "High",
+                    subheading: "Converter 16",
+                    value: highConverter
+                )
+
+                resultColumn(
+                    heading: "Low",
+                    subheading: "Converter 16",
+                    value: lowConverter
+                )
+            }
+
+
+        //--------------------------------------------------------------
+        // Aquilion 32 / 64 Electronics
+        //--------------------------------------------------------------
+
+        case .aquilion32,
+             .aquilion64:
+
+            VStack(spacing: 20) {
+
+                //------------------------------------------------------
+                // ADC2 Board Results
+                //------------------------------------------------------
+
+                HStack {
+
+                    resultColumn(
+                        heading: "High",
+                        subheading: "ADC2",
+                        value: highADC2
+                    )
+
+                    resultColumn(
+                        heading: "Low",
+                        subheading: "ADC2",
+                        value: lowADC2
+                    )
+                }
+
+                //------------------------------------------------------
+                // QV2 Board Results
+                //------------------------------------------------------
+
+                HStack {
+
+                    resultColumn(
+                        heading: "High",
+                        subheading: "QV2",
+                        value: highQV2
+                    )
+
+                    resultColumn(
+                        heading: "Low",
+                        subheading: "QV2",
+                        value: lowQV2
+                    )
+                }
+            }
         }
     }
 
