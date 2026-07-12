@@ -2,27 +2,44 @@
 //  ContentView.swift
 //  iRingDiag
 //
-//  Main SwiftUI user interface for the Toshiba Aquilion 16
-//  CT ring-artifact diagnostic calculation.
+//  Main SwiftUI user interface for the iRingDiag
+//  CT ring-artifact diagnostic application.
+//
+//  Supported scanner models:
+//
+//      • Aquilion 16
+//      • Aquilion 32
+//      • Aquilion 64
 //
 //  This file is responsible for:
 //
-//  1. Accepting a radius from the user.
-//  2. Keeping the text field and slider synchronized.
-//  3. Limiting the radius to the supported range.
-//  4. Calling the AQ16 calculation routines.
-//  5. Displaying detector-channel and converter results.
+//  1. Accepting a ring radius from the user.
+//  2. Keeping the radius text field and slider synchronized.
+//  3. Limiting the radius to the supported operating range.
+//  4. Calling the detector geometry and board lookup routines.
+//  5. Displaying detector-channel and electronics-board results.
+//  6. Allowing the user to select the scanner model.
 //
 //  Engineering calculations are intentionally kept outside this file:
+//
+//      ScannerModel.swift
+//          Defines the scanner models supported by the application.
 //
 //      Aq16Math.swift
 //          Calculates detector channels from the selected radius.
 //
+//          Aquilion 16, Aquilion 32, and Aquilion 64 currently use
+//          the same detector geometry.
+//
 //      Aq16Converters.swift
-//          Converts detector-channel numbers into converter numbers.
+//          Maps Aquilion 16 detector channels to CONV16 boards.
+//
+//      Aq3264Converters.swift
+//          Maps Aquilion 32 and Aquilion 64 detector channels to
+//          ADC2 and QV2 boards.
 //
 //  Keeping the user interface separate from the engineering calculations
-//  makes the program easier to test, maintain, and expand.
+//  makes the program easier to test, maintain, verify, and expand.
 //
 //  NASA Power of 10 principles adapted for SwiftUI:
 //
@@ -36,6 +53,18 @@
 //  - Keep calculation logic separate from presentation logic.
 //  - Document assumptions and operating limits.
 //  - Prefer compiler-checkable code over clever shortcuts.
+//
+//  Revision History
+//  ----------------
+//
+//  2026-07-10  Stan Benoit
+//      Initial SwiftUI conversion for Aquilion 16.
+//
+//  2026-07-12  Stan Benoit
+//      Added scanner model selection.
+//      Added Aquilion 32 and Aquilion 64 support.
+//      Added ADC2 and QV2 board calculations and display.
+//      Updated documentation for multi-scanner operation.
 //
 //  Author: Stan Benoit
 //
@@ -52,12 +81,19 @@ import SwiftUI
 /// `ContentView` is a SwiftUI `View`.
 ///
 /// In SwiftUI, a view is a description of what the interface should look
-/// like for its current state. SwiftUI automatically rebuilds the view
+/// like for its current state. SwiftUI automatically reevaluates the view
 /// when one of its observed state values changes.
 ///
-/// This structure does not directly perform the AQ16 engineering
+/// This structure does not directly perform detector engineering
 /// calculations. Instead, it passes the current radius to `Aq16Math`
-/// and passes the resulting detector channels to `Aq16Converters`.
+/// and passes the resulting detector channels to the appropriate
+/// electronics-board lookup type.
+///
+/// The selected scanner determines which board results are displayed:
+///
+/// - Aquilion 16 displays CONV16 boards.
+/// - Aquilion 32 displays ADC2 and QV2 boards.
+/// - Aquilion 64 displays ADC2 and QV2 boards.
 struct ContentView: View {
 
     //==================================================================
@@ -71,15 +107,16 @@ struct ContentView: View {
 
     /// Largest radius accepted by the original Objective-C application.
     ///
-    /// The Aquilion 16 diagnostic slider supports a maximum radius
-    /// of 250 millimeters.
+    /// Units:
+    ///
+    ///     millimeters
     ///
     /// Radius values above this limit are clamped to this value.
     private let maximumRadius: Double = 250.0
 
     /// Amount by which the radius changes during one slider increment.
     ///
-    /// A step size of 0.1 gives the user one decimal place of precision.
+    /// A step size of 0.1 provides one decimal place of precision.
     private let radiusStep: Double = 0.1
 
 
@@ -93,9 +130,10 @@ struct ContentView: View {
     /// may change while the application is running.
     ///
     /// When `radiusText` changes, SwiftUI reevaluates the view's `body`
-    /// and updates any interface elements that depend on this value.
+    /// and updates interface elements that depend on the radius.
     ///
-    /// A `String` is used because text fields edit text, not numbers.
+    /// A `String` is used because text fields edit text rather than
+    /// numeric values directly.
     @State private var radiusText: String = "0.0"
 
     /// Numeric radius represented by the slider.
@@ -107,13 +145,18 @@ struct ContentView: View {
     /// synchronized whenever the user moves the slider or submits
     /// a typed value.
     @State private var sliderValue: Double = 0.0
-    
 
+    /// Scanner model currently selected by the user.
+    ///
+    /// Changing this value causes SwiftUI to rebuild the results section
+    /// and display the electronics appropriate for that scanner.
+    ///
+    /// Aquilion 16 is used as the default scanner when the app starts.
     @State private var selectedScanner: ScannerModel = .aquilion16
 
 
     //==================================================================
-    // MARK: - Derived Input Value
+    // MARK: - Derived Radius Value
     //==================================================================
 
     /// Numeric radius derived from the text-field contents.
@@ -130,7 +173,7 @@ struct ContentView: View {
     ///     "-"
     ///     "abc"
     ///
-    /// The nil-coalescing operator `??` provides `minimumRadius` when
+    /// The nil-coalescing operator `??` supplies `minimumRadius` when
     /// conversion fails.
     ///
     /// This avoids force-unwrapping and prevents invalid text from
@@ -141,74 +184,71 @@ struct ContentView: View {
 
 
     //==================================================================
-    // MARK: - AQ16 Detector Calculations
+    // MARK: - Detector Channel Calculations
     //==================================================================
 
     /// High-side detector channel for the current radius.
     ///
-    /// The actual detector geometry calculation is performed by
-    /// `Aq16Math`. This view only requests and displays the result.
+    /// Aquilion 16, Aquilion 32, and Aquilion 64 use the same
+    /// radius-to-detector-channel geometry.
+    ///
+    /// The electronics boards differ between scanner families, but the
+    /// detector channel calculation remains the same.
     private var highChannel: Int {
-
-        switch selectedScanner {
-
-        case .aquilion16:
-            return Aq16Math.highChannel(forRadius: radius)
-
-        case .aquilion32,
-             .aquilion64:
-            return Aq16Math.highChannel(forRadius: radius)
-        }
+        Aq16Math.highChannel(forRadius: radius)
     }
 
     /// Low-side detector channel for the current radius.
     ///
-    /// Keeping this calculation in `Aq16Math` prevents engineering
-    /// formulas from becoming mixed with SwiftUI layout code.
+    /// Aquilion 16, Aquilion 32, and Aquilion 64 currently use the same
+    /// detector geometry calculation.
     private var lowChannel: Int {
         Aq16Math.lowChannel(forRadius: radius)
     }
 
 
     //==================================================================
-    // MARK: - AQ16 Converter Calculations
+    // MARK: - Aquilion 16 Converter Calculations
     //==================================================================
 
-    /// Converter associated with the high-side detector channel.
-    ///
-    /// The high detector channel is calculated first. That channel is
-    /// then passed to `Aq16Converters`, which performs the converter
-    /// lookup.
+    /// CONV16 board associated with the high-side detector channel.
     private var highConverter: Int {
         Aq16Converters.highConverter(for: highChannel)
     }
-    /// High-side ADC2 board for Aquilion 32/64.
+
+    /// CONV16 board associated with the low-side detector channel.
+    private var lowConverter: Int {
+        Aq16Converters.lowConverter(for: lowChannel)
+    }
+
+
+    //==================================================================
+    // MARK: - Aquilion 32 / 64 ADC2 Calculations
+    //==================================================================
+
+    /// ADC2 board associated with the high-side detector channel.
     private var highADC2: Int {
         Aq3264Converters.highADC2(for: highChannel)
     }
 
-    /// Low-side ADC2 board for Aquilion 32/64.
+    /// ADC2 board associated with the low-side detector channel.
     private var lowADC2: Int {
         Aq3264Converters.lowADC2(for: lowChannel)
     }
 
-    /// High-side QV2 board for Aquilion 32/64.
+
+    //==================================================================
+    // MARK: - Aquilion 32 / 64 QV2 Calculations
+    //==================================================================
+
+    /// QV2 board associated with the high-side detector channel.
     private var highQV2: Int {
         Aq3264Converters.highQV2(for: highChannel)
     }
 
-    /// Low-side QV2 board for Aquilion 32/64.
+    /// QV2 board associated with the low-side detector channel.
     private var lowQV2: Int {
         Aq3264Converters.lowQV2(for: lowChannel)
-    }
-
-    /// Converter associated with the low-side detector channel.
-    ///
-    /// The low detector channel is calculated first. That channel is
-    /// then passed to `Aq16Converters`, which performs the converter
-    /// lookup.
-    private var lowConverter: Int {
-        Aq16Converters.lowConverter(for: lowChannel)
     }
 
 
@@ -218,13 +258,14 @@ struct ContentView: View {
 
     /// Describes the complete user interface for this screen.
     ///
-    /// SwiftUI views are built by combining smaller views such as:
+    /// SwiftUI views are constructed by combining smaller views such as:
     ///
     /// - `ZStack`
     /// - `VStack`
     /// - `HStack`
     /// - `Text`
     /// - `TextField`
+    /// - `Picker`
     /// - `Slider`
     ///
     /// SwiftUI reevaluates this property whenever relevant state changes.
@@ -260,21 +301,10 @@ struct ContentView: View {
             VStack(spacing: 24) {
 
                 //------------------------------------------------------
-                // Scanner Model Title
-                //------------------------------------------------------
-                
-                //------------------------------------------------------
                 // Scanner Selection
                 //------------------------------------------------------
 
-                Picker("Scanner", selection: $selectedScanner) {
-
-                    ForEach(ScannerModel.allCases) { scanner in
-                        Text(scanner.rawValue)
-                            .tag(scanner)
-                    }
-                }
-                .pickerStyle(.menu)
+                scannerPicker
 
 
                 //------------------------------------------------------
@@ -282,9 +312,13 @@ struct ContentView: View {
                 //------------------------------------------------------
 
                 Text(selectedScanner.rawValue)
-                    .font(.system(size: 34,
-                                  weight: .bold))
-                    .padding(.top, 25)
+                    .font(
+                        .system(
+                            size: 34,
+                            weight: .bold
+                        )
+                    )
+                    .padding(.top, 10)
 
 
                 //------------------------------------------------------
@@ -309,10 +343,10 @@ struct ContentView: View {
 
 
                 //------------------------------------------------------
-                // Converter Results
+                // Electronics Board Results
                 //------------------------------------------------------
 
-                converterSection
+                electronicsBoardSection
 
 
                 //------------------------------------------------------
@@ -330,6 +364,37 @@ struct ContentView: View {
             }
             .padding(.horizontal, 24)
         }
+    }
+
+
+    //==================================================================
+    // MARK: - Scanner Picker
+    //==================================================================
+
+    /// Displays the scanner model selection menu.
+    ///
+    /// The picker is bound to `selectedScanner`.
+    ///
+    /// SwiftUI automatically updates `selectedScanner` when the user
+    /// selects a different scanner from the menu.
+    private var scannerPicker: some View {
+
+        Picker(
+            "Scanner",
+            selection: $selectedScanner
+        ) {
+
+            // `ScannerModel.allCases` is available because ScannerModel
+            // conforms to `CaseIterable`.
+            //
+            // SwiftUI creates one menu entry for each supported scanner.
+            ForEach(ScannerModel.allCases) { scanner in
+
+                Text(scanner.rawValue)
+                    .tag(scanner)
+            }
+        }
+        .pickerStyle(.menu)
     }
 
 
@@ -359,8 +424,7 @@ struct ContentView: View {
 
             // Use a decimal keyboard when one is available.
             //
-            // This is primarily useful on iPhone and iPad. On macOS,
-            // the modifier may have no visible effect.
+            // This is primarily useful on iPhone and iPad.
             .keyboardType(.decimalPad)
 
             // `onSubmit` runs when the user submits the text field,
@@ -398,10 +462,9 @@ struct ContentView: View {
 
 
     //==================================================================
-    // MARK: - Converter Section
+    // MARK: - Electronics Board Section
     //==================================================================
 
-    /// Displays the converters corresponding to the calculated channels.
     /// Displays the electronics boards associated with the calculated
     /// high-side and low-side detector channels.
     ///
@@ -415,7 +478,7 @@ struct ContentView: View {
     /// `@ViewBuilder` allows this computed property to return different
     /// SwiftUI layouts depending on the selected scanner model.
     @ViewBuilder
-    private var converterSection: some View {
+    private var electronicsBoardSection: some View {
 
         switch selectedScanner {
 
@@ -468,6 +531,7 @@ struct ContentView: View {
                         value: lowADC2
                     )
                 }
+
 
                 //------------------------------------------------------
                 // QV2 Board Results
@@ -530,14 +594,15 @@ struct ContentView: View {
     /// Creates one formatted result column.
     ///
     /// This helper avoids duplicating the same SwiftUI layout for every
-    /// channel and converter value.
+    /// channel and electronics-board value.
     ///
     /// - Parameters:
     ///   - heading: First label displayed above the result.
     ///   - subheading: Second label displayed above the result.
     ///   - value: Integer result to display.
     ///
-    /// - Returns: A SwiftUI view containing the formatted result.
+    /// - Returns:
+    ///     A SwiftUI view containing the formatted result.
     private func resultColumn(
         heading: String,
         subheading: String,
@@ -583,7 +648,7 @@ struct ContentView: View {
     ///
     /// Supported range:
     ///
-    ///     0.0 ... 250.0 millimeters
+    ///     0.0...250.0 millimeters
     ///
     /// Examples:
     ///
@@ -599,7 +664,8 @@ struct ContentView: View {
     ///     Typed value: "abc"
     ///     Applied value: Existing slider value
     ///
-    /// This function contains no force unwraps and has a bounded result.
+    /// This function contains no force unwraps and always produces
+    /// a bounded result.
     private func applyTypedRadius() {
 
         // Attempt to convert the user's text into a number.
@@ -618,11 +684,13 @@ struct ContentView: View {
         // Restrict the typed value to the legal operating range.
         //
         // First:
+        //
         //     max(typedValue, minimumRadius)
         //
         // prevents the result from falling below zero.
         //
         // Then:
+        //
         //     min(..., maximumRadius)
         //
         // prevents the result from exceeding 250 millimeters.
@@ -648,7 +716,8 @@ struct ContentView: View {
     /// Keeping formatting in one helper prevents slightly different
     /// formatting code from being repeated throughout the view.
     ///
-    /// - Parameter value: Radius to display in millimeters.
+    /// - Parameter value:
+    ///     Radius to display in millimeters.
     private func updateRadiusText(using value: Double) {
 
         radiusText = String(
