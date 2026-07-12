@@ -153,6 +153,11 @@ struct ContentView: View {
     ///
     /// Aquilion 16 is used as the default scanner when the app starts.
     @State private var selectedScanner: ScannerModel = .aquilion16
+    
+    /// Tracks whether the radius text field currently owns keyboard focus.
+    ///
+    /// Setting this value to `false` dismisses the software keyboard.
+    @FocusState private var radiusFieldIsFocused: Bool
 
 
     //==================================================================
@@ -364,8 +369,26 @@ struct ContentView: View {
             }
             .padding(.horizontal, 24)
         }
-    }
+    .toolbar {
 
+        ToolbarItemGroup(placement: .keyboard) {
+
+            Spacer()
+
+            Button("Done") {
+
+                // Validate and apply the typed radius.
+                applyTypedRadius()
+
+                // Remove focus from the text field.
+                // This dismisses the software keyboard.
+                radiusFieldIsFocused = false
+            }
+        }
+    }
+}
+
+    
 
     //==================================================================
     // MARK: - Scanner Picker
@@ -421,6 +444,7 @@ struct ContentView: View {
             .font(.title2)
             .textFieldStyle(.roundedBorder)
             .frame(width: 200)
+            .focused($radiusFieldIsFocused)
 
             // Use a decimal keyboard when one is available.
             //
